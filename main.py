@@ -24,11 +24,20 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone
+import check_live
+
+# Force UTF-8 output on Windows (fixes Unicode crash in PowerShell)
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 from config import (
     OANDA_API_KEY, OANDA_ACCOUNT_ID, ALL_INSTRUMENTS, GOLD_PAIR,
     CHECK_INTERVAL_SECONDS, KILL_ZONES, REQUIRE_KILL_ZONE,
-    LOG_DIR,
+    LOG_DIR, TP1_RR, TP2_RR,
 )
 from data_fetcher import (
     fetch_account_summary, fetch_open_trades,
@@ -130,8 +139,19 @@ def run_once(risk_mgr: RiskManager, trade_mgr: TradeManager) -> int:
     trade_mgr.manage_all()
 
     # ── 5. Collect signals from all instruments ───────────────────
-    context    = risk_mgr.get_sb_context()
+    context     = risk_mgr.get_sb_context()
     all_signals = []
+
+    _STRATEGY_LABELS = {
+        "analyze_s1_asian_range_sweep": "S1  Asian Range Sweep  ",
+        "analyze_s2_ny_open_killshot":  "S2  NY Open Killshot   ",
+        "analyze_s3_ob_psychological":  "S3  OB + Psych Levels  ",
+        "analyze_s4_weekly_profile":    "S4  Weekly Profile     ",
+        "analyze_s5_fvg_retracement":   "S5  FVG Retracement    ",
+        "analyze_s6_power_of_3":        "S6  Power of 3         ",
+        "analyze_s7_silver_bullet":     "S7  Silver Bullet      ",
+        "analyze_forex_lq_sweep":       "LQ  Forex LQ Sweep     ",
+    }
 
     for instrument in ALL_INSTRUMENTS:
         try:
@@ -142,23 +162,68 @@ def run_once(risk_mgr: RiskManager, trade_mgr: TradeManager) -> int:
 
             signal = analyze_all_strategies(instrument, mtf_data, context)
             signal["pair"]     = instrument
-            signal["mtf_data"] = mtf_data   # attach for LLM / logging
+            signal["mtf_data"] = mtf_data
 
+            # ── Per-instrument strategy breakdown ─────────────────
+            now_str  = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            session  = _get_session_name()
+            price_1h = mtf_data.get("1H", [{}])[-1]
+            price_str = f"H:{price_1h.get('high', '?')}  L:{price_1h.get('low', '?')}  C:{price_1h.get('close', '?')}"
+
+            print(f"\n" + "-"*68, flush=True)
+            print(f"  {instrument:<10}  {now_str}  [{session}]  {price_str}", flush=True)
+            print("-"*68, flush=True)
+
+            individual = signal.get("_all_results", [])
+            for r in individual:
+                sid     = r.get("strategy_id", "")
+                label   = sid
+                for fn_name, lbl in _STRATEGY_LABELS.items():
+                    key = fn_name.replace("analyze_", "").replace("_", " ").upper()
+                    if key in sid.upper() or sid.upper() in lbl.upper():
+                        label = lbl
+                        break
+
+                sig_val = r.get("signal", "NO_TRADE")
+                score   = r.get("score", 0)
+                reason  = (r.get("reason") or "")[:52]
+
+                if sig_val == "LONG":
+                    tag    = "[LONG] "
+                    detail = f"score={score}/10  entry={r.get('entry')}  SL={r.get('stop_loss')}  TP1={r.get('tp1')}"
+                elif sig_val == "SHORT":
+                    tag    = "[SHORT]"
+                    detail = f"score={score}/10  entry={r.get('entry')}  SL={r.get('stop_loss')}  TP1={r.get('tp1')}"
+                else:
+                    tag    = "[ --- ]"
+                    detail = reason
+
+                print(f"  {label} | {tag} | {detail}", flush=True)
+
+            print("-"*68, flush=True)
             if signal.get("signal") != "NO_TRADE":
-                all_signals.append(signal)
-                logger.info(
-                    "Signal %s: %s score=%d | %s",
-                    instrument, signal["signal"], signal["score"], signal.get("reason", "")[:60]
+                sig_val = signal["signal"]
+                arrow   = "^ LONG " if sig_val == "LONG" else "v SHORT"
+                print(
+                    f"  ** BEST | {arrow} score={signal['score']}/10"
+                    f" | {signal.get('strategy_id','')}"
+                    f"  entry={signal.get('entry')}"
+                    f"  SL={signal.get('stop_loss')}"
+                    f"  TP1={signal.get('tp1')}  TP2={signal.get('tp2')}",
+                    flush=True
                 )
+                all_signals.append(signal)
             else:
-                logger.debug("No trade %s: %s", instrument, signal.get("reason", "")[:60])
+                top_reason = (signal.get("reason") or "")[:70]
+                print(f"  X NONE  | {top_reason}", flush=True)
+            print(flush=True)
 
         except Exception as exc:
             logger.error("Strategy error for %s: %s", instrument, exc, exc_info=True)
             notify_error(f"Strategy loop {instrument}", str(exc))
 
     if not all_signals:
-        logger.info("No valid signals this cycle")
+        print("\n  No actionable signals this cycle.\n", flush=True)
         return 0
 
     # ── 6. Rank & select best signal ──────────────────────────────
@@ -227,10 +292,25 @@ def run_once(risk_mgr: RiskManager, trade_mgr: TradeManager) -> int:
         return 0
 
     if not trade:
+        print("\n  [FAILED] ORDER NOT OPENED\n", flush=True)
         logger.error("Order execution returned None — trade not opened")
         return 0
 
     trade_id = trade["trade_id"]
+    direction_arrow = "^" if best["signal"] == "LONG" else "v"
+    print("\n" + "="*68, flush=True)
+    print(f"  [TRADE EXECUTED]  {direction_arrow} {best['signal']} {pair}", flush=True)
+    print("="*68, flush=True)
+    print(f"  Trade ID   : {trade_id}", flush=True)
+    print(f"  Strategy   : {best.get('strategy_id')}", flush=True)
+    print(f"  Score      : {best.get('score')}/10", flush=True)
+    print(f"  Fill Price : {trade['fill_price']}", flush=True)
+    print(f"  Units      : {units:,}", flush=True)
+    print(f"  Stop Loss  : {best['stop_loss']}  ({best['risk_pips']} pips)", flush=True)
+    print(f"  TP1        : {best['tp1']}  (1:{TP1_RR} RR - 50% close)", flush=True)
+    print(f"  TP2        : {best['tp2']}  (1:{TP2_RR} RR - runner)", flush=True)
+    print(f"  Risk $     : ${risk_dollars:,.2f}", flush=True)
+    print("="*68 + "\n", flush=True)
 
     # ── 12. Post-execution bookkeeping ────────────────────────────
     open_time = datetime.now(timezone.utc).isoformat()
@@ -306,6 +386,7 @@ def run_bot():
             notify_error("Main loop", str(exc))
 
         if _RUNNING:
+            check_live.scan_once()
             logger.debug("Sleeping %ds", CHECK_INTERVAL_SECONDS)
             time.sleep(CHECK_INTERVAL_SECONDS)
 

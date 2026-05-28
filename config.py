@@ -117,14 +117,14 @@ KILL_ZONES = [
 # Strategy toggles & minimum scores
 # ============================================================
 STRATEGY_ENABLED = {
-    "S1_AsianSweep":    True,
-    "S2_NYKillshot":    True,
-    "S3_OB_Psych":      True,
-    "S4_WeeklyProfile": True,
-    "S5_FVG":           True,
-    "S6_PO3":           True,
-    "S7_SilverBullet":  True,
-    "LQ_ForexSweep":    True,
+    "S1_ASIAN_RANGE_SWEEP":       True,
+    "S2_NY_OPEN_KILLSHOT":        True,
+    "S3_OB_PSYCHOLOGICAL_LEVELS": True,
+    "S4_WEEKLY_PROFILE":          True,
+    "S5_FVG_RETRACEMENT":         True,
+    "S6_POWER_OF_3":              True,
+    "S7_SILVER_BULLET":           True,
+    "S_FOREX_LQ_SWEEP":           True,
 }
 
 STRATEGY_MIN_SCORE = 6   # 0–10 score; signals below this are discarded

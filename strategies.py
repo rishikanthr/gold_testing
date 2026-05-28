@@ -1119,7 +1119,9 @@ def analyze_all_strategies(pair: str, mtf_data: dict,
 
     if not valid:
         reasons = [r["reason"][:40] for r in all_results[:3]]
-        return _no_trade("MASTER", f"No valid signals. Top reasons: {'; '.join(reasons)}")
+        result = _no_trade("MASTER", f"No valid signals. Top reasons: {'; '.join(reasons)}")
+        result["_all_results"] = all_results
+        return result
 
     # Group by direction — if multiple strategies agree, boost score
     long_results  = [r for r in valid if r["signal"] == "LONG"]
@@ -1146,7 +1148,11 @@ def analyze_all_strategies(pair: str, mtf_data: dict,
     if m15 := mtf_data.get("15M"):
         current = m15[-1]["close"]
         if best["entry"] and abs(best["entry"] - current) > 50 * pip:
-            return _no_trade("MASTER",
-                             f"Entry {best['entry']} too far from current {current:.5f}")
+            result = _no_trade("MASTER",
+                               f"Entry {best['entry']} too far from current {current:.5f}")
+            result["_all_results"] = all_results
+            return result
 
+    # Attach individual strategy results for verbose inspection
+    best["_all_results"] = all_results
     return best
