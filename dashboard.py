@@ -31,7 +31,7 @@ st.set_page_config(
 
 # ── Import bot modules (graceful fallback if not configured) ──
 try:
-    from config import ALL_INSTRUMENTS, GOLD_PAIR, LOG_DIR, DB_FILE, STATE_FILE
+    from gold_testing.backtester import ALL_INSTRUMENTS, GOLD_PAIR, LOG_DIR, DB_FILE, STATE_FILE
     from data_fetcher import fetch_account_summary, fetch_open_trades, fetch_current_price
     from logger import (
         init_db, get_recent_trades, get_all_trades,

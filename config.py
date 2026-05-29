@@ -173,9 +173,9 @@ PO3_JUDAS_TIMING_MAX  = 10     # UTC hour when Judas swing window ends
 
 # S7 — Silver Bullet
 SB_WINDOWS = [
-    {"name": "Asian SB",   "start_utc": 3,  "end_utc": 4},
-    {"name": "London SB",  "start_utc": 10, "end_utc": 11},
-    {"name": "NY SB",      "start_utc": 14, "end_utc": 15},
+    {"name": "Asian SB",   "start_h": 3,  "end_h": 4},
+    {"name": "London SB",  "start_h": 10, "end_h": 11},
+    {"name": "NY SB",      "start_h": 14, "end_h": 15},
 ]
 SB_MAX_SETUPS_PER_WINDOW = 1   # only 1 SB trade per time window per day
 
